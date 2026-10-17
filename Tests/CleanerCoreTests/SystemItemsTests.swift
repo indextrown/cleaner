@@ -108,6 +108,147 @@ import Testing
         #expect(policy.violation(for: "/private/var/folders/ab/xyz/T/tmp") == .outsideAllowedRoots)
     }
 
+    @Test func findsSandboxedAppCachesAndPlaygroundDevices() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let containers = "home/Library/Containers"
+        try fixture.file("\(containers)/com.example.notes/Data/Library/Caches/blob", bytes: 50_000)
+        try fixture.file("\(containers)/com.example.notes/Data/Documents/note", bytes: 50_000)
+        try fixture.file("\(containers)/com.apple.mail/Data/Library/Caches/blob", bytes: 50_000)
+        try fixture.file("\(containers)/com.example.empty/Data/Library/Preferences/p.plist", bytes: 10)
+        try fixture.file("home/Library/Developer/XCPGDevices/DEVICE/data/blob", bytes: 50_000)
+        let ids: Set<String> = ["apps.containerCache", "xcode.playgroundDevices"]
+        let engine = CleanupRuleEngine(
+            rules: [CleanupRule].defaults.filter { ids.contains($0.id) },
+            homeDirectory: fixture.path("home")
+        )
+
+        let report = await engine.evaluateLocations(
+            outside: [fixture.path("elsewhere")],
+            scanner: DiskScanner(options: ScanOptions(threadCount: 2))
+        )
+
+        #expect(Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.path, $0.rule.id) }) == [
+            fixture.path("\(containers)/com.example.notes/Data/Library/Caches"): "apps.containerCache",
+            fixture.path("home/Library/Developer/XCPGDevices"): "xcode.playgroundDevices",
+        ])
+    }
+
+    @Test func listsEachAvailableSimulator() {
+        let devices = Data("""
+        {"devices": {
+          "com.apple.CoreSimulator.SimRuntime.iOS-26-0": [
+            {"name": "iPhone 17", "udid": "AAA", "isAvailable": true, "state": "Shutdown",
+             "lastBootedAt": "2026-10-06T03:05:46Z", "dataPathSize": 6000000000,
+             "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/AAA/data"},
+            {"name": "iPad Air", "udid": "BBB", "isAvailable": true, "state": "Booted", "dataPathSize": 9000000000,
+             "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/BBB/data"}
+          ],
+          "com.apple.CoreSimulator.SimRuntime.iOS-16-0": [
+            {"name": "iPhone 14", "udid": "CCC", "isAvailable": false,
+             "dataPath": "/Users/me/Library/Developer/CoreSimulator/Devices/CCC/data"}
+          ]
+        }}
+        """.utf8)
+
+        let items = SimulatorItems.deviceItems(devicesJSON: devices)
+
+        #expect(items.map(\.title) == ["iPad Air · iOS 26.0", "iPhone 17 · iOS 26.0"])
+        #expect(items.map(\.selector) == ["BBB", "AAA"])
+        #expect(items.map(\.bytes) == [9_000_000_000, 6_000_000_000])
+        #expect(items.allSatisfy { $0.grade == .review && $0.ruleID == "simulator.device" })
+        #expect(items[1].path == "/Users/me/Library/Developer/CoreSimulator/Devices/AAA")
+        #expect(items[1].command.arguments == ["simctl", "delete", "AAA"])
+        #expect(items[0].detail.contains("지금 켜져 있음"))
+        #expect(!items[1].detail.contains("기록 없음"))
+    }
+
+    @Test func findsOldRuleFilteredLeftoversOnly() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let temporary = fixture.path("T")
+        try fixture.file("T/com.example.app.ShipIt.old/Example.app/binary", bytes: 300_000)
+        try fixture.file("T/com.example.app.ShipIt.new/Example.app/binary", bytes: 300_000)
+        try fixture.file("T/other.old/file", bytes: 300_000)
+        let twoDaysAgo = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
+        for name in ["com.example.app.ShipIt.old", "other.old"] {
+            try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: fixture.path("T/\(name)"))
+        }
+        let rule = CleanupRule(
+            id: "test.updates", tool: "앱 업데이트", title: "앱 업데이트 잔여물", grade: .cache, restore: "",
+            scope: .contentsOf(temporary), namePatterns: ["*.ShipIt.*"], minimumAge: 24 * 60 * 60
+        )
+        let engine = CleanupRuleEngine(rules: [rule], homeDirectory: fixture.path("home"))
+
+        let report = await engine.evaluateLocations(outside: [fixture.path("home")], scanner: DiskScanner(options: ScanOptions(threadCount: 2)))
+
+        #expect(report.candidates.map(\.path) == [temporary + "/com.example.app.ShipIt.old"])
+        #expect(report.rejected.map(\.path) == [temporary + "/com.example.app.ShipIt.new"])
+        #expect(report.rejected.map(\.reason) == [.recentlyModified])
+    }
+
+    @Test func countsOldTemporaryFilesOfATool() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.file("T/.com.openai.codex.AAA", bytes: 40_000)
+        try fixture.file("T/.com.openai.codex.BBB", bytes: 40_000)
+        try fixture.file("T/.com.openai.codex.NEW", bytes: 40_000)
+        try fixture.file("T/.com.openai.codex.DIR/inside", bytes: 40_000)
+        try fixture.file("T/unrelated", bytes: 40_000)
+        let twoDaysAgo = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
+        for name in [".com.openai.codex.AAA", ".com.openai.codex.BBB", ".com.openai.codex.DIR", "unrelated"] {
+            try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: fixture.path("T/\(name)"))
+        }
+
+        let items = TemporaryFileItems.find(directory: fixture.path("T"))
+
+        let item = try #require(items.first)
+        #expect(items.count == 1)
+        #expect(item.title == "Codex 임시 파일 2개")
+        #expect(item.bytes == fixture.allocatedBytes("T/.com.openai.codex.AAA") + fixture.allocatedBytes("T/.com.openai.codex.BBB"))
+        #expect(item.command.executable == "/usr/bin/find")
+        #expect(item.command.arguments == [
+            fixture.path("T"), "-maxdepth", "1", "-type", "f", "-name", ".com.openai.codex.*", "-mmin", "+1440", "-delete",
+        ])
+        #expect(TemporaryFileItems.find(directory: fixture.path("empty")).isEmpty)
+    }
+
+    @Test func temporaryFileCommandDeletesOnlyOldMatchingFiles() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.file("T/.com.openai.codex.OLD", bytes: 1_000)
+        try fixture.file("T/.com.openai.codex.NEW", bytes: 1_000)
+        try fixture.file("T/keep.old", bytes: 1_000)
+        let twoDaysAgo = Date(timeIntervalSinceNow: -2 * 24 * 60 * 60)
+        for name in [".com.openai.codex.OLD", "keep.old"] {
+            try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: fixture.path("T/\(name)"))
+        }
+        let item = try #require(TemporaryFileItems.find(directory: fixture.path("T")).first)
+
+        try run(item.command.executable, item.command.arguments)
+
+        let left = try FileManager.default.contentsOfDirectory(atPath: fixture.path("T")).sorted()
+        #expect(left == [".com.openai.codex.NEW", "keep.old"])
+    }
+
+    @Test func readsWhatHomebrewWouldFree() throws {
+        let output = """
+        Would remove: /opt/homebrew/Library/Homebrew/vendor/portable-ruby/4.0.5_1 (1,707 files, 34.6MB)
+        Would remove: /Users/me/Library/Caches/Homebrew/node--25.0.0 (12.1MB)
+        ==> This operation would free approximately 212.1MB of disk space.
+        """
+
+        #expect(HomebrewItems.freedBytes(dryRunOutput: output) == Int64(212.1 * 1_048_576))
+        #expect(HomebrewItems.freedBytes(dryRunOutput: "would free approximately 1.5GB of") == Int64(1.5 * 1_073_741_824))
+        #expect(HomebrewItems.freedBytes(dryRunOutput: "") == nil)
+
+        let item = try #require(HomebrewItems.item(dryRunOutput: output, brew: "/opt/homebrew/bin/brew"))
+        #expect(item.path == "/opt/homebrew")
+        #expect(item.command.arguments == ["cleanup"])
+        #expect(item.detail.contains("2개"))
+        #expect(HomebrewItems.item(dryRunOutput: "", brew: "/opt/homebrew/bin/brew") == nil)
+    }
+
     private func writeAsset(_ fixture: Fixture, _ relativePath: String, version: String, build: String, neverCollected: Bool) throws {
         try fixture.file("\(relativePath)/AssetData/runtime.dmg", bytes: 200_000)
         var properties: [String: Any] = ["SimulatorVersion": version, "Build": build]

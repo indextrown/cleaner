@@ -93,6 +93,7 @@ extension DeletionTarget {
     /// 도구별로, 실행 중일 때 그 도구의 산출물을 지우면 안 되는 앱.
     static let applicationsByTool: [String: [String]] = [
         "Xcode": ["com.apple.dt.Xcode", "com.apple.iphonesimulator"],
+        "시뮬레이터 기기": ["com.apple.iphonesimulator"],
         "CocoaPods": ["com.apple.dt.Xcode"],
         "Gradle": ["com.google.android.studio"],
         "Android": ["com.google.android.studio"],

@@ -1,3 +1,5 @@
+import Foundation
+
 /// 정리 후보의 등급. 값이 작을수록 지워도 부담이 적다.
 public enum CleanupGrade: Int, Sendable, Comparable, CaseIterable {
     /// 다시 빌드하면 그대로 생기는 산출물.
@@ -23,9 +25,10 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
         case projectContents(childDirectories: Set<String>, markers: [Marker])
         /// 고정 경로 바로 아래의 디렉터리 각각. 이름이 `skippingPrefixes`로 시작하면 뺀다.
         case contentsOf(String, skippingPrefixes: [String] = [])
-        /// 고정 경로 아래 각 폴더 안에서 이름이 `names` 중 하나인 디렉터리.
-        /// 예: `~/Library/Application Support/<앱>/Cache`
-        case nestedContentsOf(String, names: Set<String>)
+        /// 고정 경로 아래 각 폴더 안에서 이름이 `names` 중 하나인 디렉터리. 이름은 `Data/Library/Caches`처럼
+        /// 여러 단계일 수 있다. 바로 아래 폴더 이름이 `skippingPrefixes`로 시작하면 뺀다.
+        /// 예: `~/Library/Application Support/<앱>/Cache`, `~/Library/Containers/<앱>/Data/Library/Caches`
+        case nestedContentsOf(String, names: Set<String>, skippingPrefixes: [String] = [])
         /// 고정 경로 자체.
         case location(String)
     }
@@ -52,6 +55,10 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
     public let linksWorkspace: Bool
     /// 경로를 직접 지우지 않고 이 명령으로 정리한다. 도구가 내부 상태를 함께 관리하는 경우에 쓴다.
     public let command: CleanupCommand?
+    /// 위치 규칙에서 이름이 이 패턴(`*.ShipIt.*`처럼 fnmatch 형식) 중 하나와 맞는 항목만 후보로 본다. 비어 있으면 모두.
+    public let namePatterns: [String]
+    /// 마지막으로 바뀐 지 이만큼(초) 지난 항목만 후보로 본다. 앱이 지금 쓰는 임시 폴더를 건드리지 않기 위해서다.
+    public let minimumAge: TimeInterval?
 
     public init(
         id: String,
@@ -61,7 +68,9 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
         restore: String,
         scope: Scope,
         linksWorkspace: Bool = false,
-        command: CleanupCommand? = nil
+        command: CleanupCommand? = nil,
+        namePatterns: [String] = [],
+        minimumAge: TimeInterval? = nil
     ) {
         self.id = id
         self.tool = tool
@@ -71,5 +80,12 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
         self.scope = scope
         self.linksWorkspace = linksWorkspace
         self.command = command
+        self.namePatterns = namePatterns
+        self.minimumAge = minimumAge
+    }
+
+    /// 이름이 `namePatterns`와 맞는지. 패턴이 없으면 늘 맞다.
+    public func matchesName(_ name: String) -> Bool {
+        namePatterns.isEmpty || namePatterns.contains { fnmatch($0, name, 0) == 0 }
     }
 }

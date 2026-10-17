@@ -243,7 +243,16 @@ final class ExplorerModel {
     private func writeScanReportIfRequested(_ result: ScanResult) {
         guard let path = UserDefaults.standard.string(forKey: "scanReport") else { return }
         let components = result.duration.components
+        // 1GB 이상인 폴더를 깊이 6까지 남겨, 볼륨을 무엇이 차지하는지 나중에 나눠 볼 수 있게 한다.
+        var directories: [[String: Any]] = []
+        var stack = [(node: result.root, depth: 0)]
+        while let (node, depth) = stack.popLast() {
+            guard node.totalBytes >= 1 << 30 else { continue }
+            directories.append(["path": node.path, "bytes": node.totalBytes, "unsharedBytes": node.totalUnsharedBytes])
+            if depth < 6 { stack += node.children.map { (node: $0, depth: depth + 1) } }
+        }
         let report: [String: Any] = [
+            "directories": directories,
             "root": result.root.name,
             "seconds": Double(components.seconds) + Double(components.attoseconds) / 1e18,
             "hasFullDiskAccess": hasFullDiskAccess,

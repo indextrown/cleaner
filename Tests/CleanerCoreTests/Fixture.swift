@@ -98,6 +98,11 @@ struct CommandFailed: Error, CustomStringConvertible {
 
 @discardableResult
 func run(_ executable: String, _ arguments: String...) throws -> String {
+    try run(executable, arguments)
+}
+
+@discardableResult
+func run(_ executable: String, _ arguments: [String]) throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments

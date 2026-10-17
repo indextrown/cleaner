@@ -39,6 +39,8 @@ public struct RejectedMatch: Sendable {
         case missingMarker
         /// macOS가 관리하는 항목이다.
         case systemManaged
+        /// 규칙이 정한 시간 안에 바뀌어서 지금 쓰는 중일 수 있다.
+        case recentlyModified
     }
 
     public let node: DirectoryNode
@@ -109,7 +111,7 @@ public struct CleanupRuleEngine: Sendable {
         for rule in rules {
             let path: String
             switch rule.scope {
-            case .location(let location), .contentsOf(let location, _), .nestedContentsOf(let location, _):
+            case .location(let location), .contentsOf(let location, _), .nestedContentsOf(let location, _, _):
                 path = location.hasPrefix("/") ? location : homeDirectory + "/" + location
             case .project, .projectContents:
                 continue
@@ -155,7 +157,7 @@ public struct CleanupRuleEngine: Sendable {
         // 다른 규칙이 직접 가리키는 경로(예: `/var/folders/…/C/com.apple.dt.Instruments`)는 건너뛰면 안 된다.
         let targets: [String] = rules.compactMap { rule in
             switch rule.scope {
-            case .location(let location), .contentsOf(let location, _), .nestedContentsOf(let location, _):
+            case .location(let location), .contentsOf(let location, _), .nestedContentsOf(let location, _, _):
                 absolute(location)
             case .project, .projectContents:
                 nil
@@ -163,7 +165,15 @@ public struct CleanupRuleEngine: Sendable {
         }
         var paths = Set<String>()
         for rule in rules {
-            guard case .contentsOf(let location, let prefixes) = rule.scope, !prefixes.isEmpty else { continue }
+            let location: String
+            let prefixes: [String]
+            switch rule.scope {
+            case .contentsOf(let path, let skipping), .nestedContentsOf(let path, _, let skipping):
+                (location, prefixes) = (path, skipping)
+            default:
+                continue
+            }
+            guard !prefixes.isEmpty else { continue }
             let container = absolute(location)
             let names = (try? FileManager.default.contentsOfDirectory(atPath: container)) ?? []
             for name in names where prefixes.contains(where: { name.hasPrefix($0) }) {
@@ -241,11 +251,14 @@ private struct Evaluation {
             case .location(let path):
                 guard let (node, nodePath) = locate(absolutePath(path)), node.status == .scanned else { continue }
                 guard visited.insert(ObjectIdentifier(node)).inserted else { continue }
+                if isTooRecent(node, path: nodePath, rule: rule) { continue }
                 candidates.append(locationCandidate(node, path: nodePath, rule: rule, evidence: "\(displayPath(path)) 위치"))
             case .contentsOf(let path, let skippingPrefixes):
                 guard let (container, containerPath) = locate(absolutePath(path)) else { continue }
                 visited.insert(ObjectIdentifier(container))
                 for child in container.children {
+                    // 이름이 맞지 않는 항목은 같은 폴더를 보는 다른 규칙이 가져갈 수 있게 건드리지 않는다.
+                    guard rule.matchesName(child.name) else { continue }
                     guard visited.insert(ObjectIdentifier(child)).inserted else { continue }
                     let childPath = Self.join(containerPath, child.name)
                     // macOS가 관리하는 폴더는 스캔에서 아예 빼기도 하므로(.excluded) 상태와 상관없이 제외 목록에 남긴다.
@@ -253,22 +266,42 @@ private struct Evaluation {
                         rejected.append(RejectedMatch(node: child, path: childPath, reason: .systemManaged))
                         continue
                     }
-                    guard child.status == .scanned else { continue }
+                    guard child.status == .scanned, !isTooRecent(child, path: childPath, rule: rule) else { continue }
                     let evidence = "\(displayPath(path)) 아래"
                     candidates.append(locationCandidate(child, path: childPath, rule: rule, evidence: evidence))
                 }
-            case .nestedContentsOf(let path, let names):
+            case .nestedContentsOf(let path, let names, let skippingPrefixes):
                 guard let (container, containerPath) = locate(absolutePath(path)) else { continue }
                 for owner in container.children where owner.status == .scanned {
-                    for child in owner.children where child.status == .scanned && names.contains(child.name) {
-                        guard visited.insert(ObjectIdentifier(child)).inserted else { continue }
-                        let childPath = Self.join(Self.join(containerPath, owner.name), child.name)
+                    if skippingPrefixes.contains(where: { owner.name.hasPrefix($0) }) { continue }
+                    for name in names.sorted() {
+                        // `Data/Library/Caches`처럼 여러 단계인 이름은 한 단계씩 내려가며 찾는다.
+                        var node: DirectoryNode? = owner
+                        for component in name.split(separator: "/") {
+                            node = node?.children.first { $0.name == component }
+                        }
+                        guard let child = node, child.status == .scanned,
+                              visited.insert(ObjectIdentifier(child)).inserted
+                        else { continue }
+                        let childPath = Self.join(Self.join(containerPath, owner.name), name)
+                        if isTooRecent(child, path: childPath, rule: rule) { continue }
                         let evidence = "\(displayPath(path))/\(owner.name) 아래"
                         candidates.append(locationCandidate(child, path: childPath, rule: rule, evidence: evidence))
                     }
                 }
             }
         }
+    }
+
+    /// 규칙에 최소 경과 시간이 있으면, 그 안에 바뀐 항목은 후보에서 빼고 제외 목록에 남긴다.
+    private mutating func isTooRecent(_ node: DirectoryNode, path: String, rule: CleanupRule) -> Bool {
+        guard let minimumAge = rule.minimumAge else { return false }
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return true }
+        let modified = TimeInterval(info.st_mtimespec.tv_sec)
+        guard Date().timeIntervalSince1970 - modified < minimumAge else { return false }
+        rejected.append(RejectedMatch(node: node, path: path, reason: .recentlyModified))
+        return true
     }
 
     private func locationCandidate(

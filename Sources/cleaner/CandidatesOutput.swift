@@ -13,6 +13,7 @@ private func title(of reason: RejectedMatch.Reason) -> String {
     switch reason {
     case .missingMarker: "마커 없음 (이름만 같음)"
     case .systemManaged: "macOS가 관리함"
+    case .recentlyModified: "최근에 바뀜 (쓰는 중일 수 있음)"
     }
 }
 
@@ -64,7 +65,7 @@ func printCandidates(_ report: CleanupReport, top: Int) {
     guard !report.rejected.isEmpty else { return }
     print("")
     print("■ 후보에서 제외")
-    for reason in [RejectedMatch.Reason.missingMarker, .systemManaged] {
+    for reason in [RejectedMatch.Reason.missingMarker, .systemManaged, .recentlyModified] {
         let items = report.rejected.filter { $0.reason == reason }
         guard !items.isEmpty else { continue }
         print("")
@@ -90,8 +91,14 @@ func printSystemItems(_ items: [SystemItem]) {
         print(sizeLine(indent: "    ", item.bytes, "\(item.title)  [\(grade)]"))
         print("                \(item.detail)")
         print("                명령: \(item.command.commandLine)")
+        if item.ruleID == "simulator.device" {
+            print("                UDID: \(item.selector)")
+        }
     }
     print("  런타임을 지우려면: cleaner clean <경로> --runtime <버전>  (예: --runtime 18.2)")
+    if let device = items.first(where: { $0.ruleID == "simulator.device" }) {
+        print("  시뮬레이터를 지우려면: cleaner clean <경로> --device <UDID>  (예: --device \(device.selector))")
+    }
 }
 
 /// 등록이 풀렸는데 남은 시뮬레이터 런타임 에셋. Cleaner로는 지울 수 없어 안내만 한다.

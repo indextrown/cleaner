@@ -7,6 +7,18 @@ enum Format {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
+    /// 지우면 확실히 비워지는 크기(공유 제외)와 최대 크기(할당)를 "1.41 GB ~ 192.62 GB"처럼 보여 준다.
+    /// 둘이 거의 같으면(90% 이상) 하나만 보여 준다.
+    static func byteRange(minimum: Int64, maximum: Int64) -> String {
+        isRange(minimum: minimum, maximum: maximum) ? "\(bytes(minimum)) ~ \(bytes(maximum))" : bytes(maximum)
+    }
+
+    static func isRange(minimum: Int64, maximum: Int64) -> Bool {
+        minimum * 10 < maximum * 9
+    }
+
+    static let byteRangeHelp = "앞은 지우면 확실히 비워지는 크기, 뒤는 APFS 클론·복제본과 함께 쓰는 데이터까지 센 최대 크기입니다."
+
     static func date(_ date: Date?) -> String {
         date?.formatted(date: .numeric, time: .omitted) ?? "기록 없음"
     }

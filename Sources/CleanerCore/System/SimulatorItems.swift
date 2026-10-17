@@ -28,7 +28,7 @@ public enum SimulatorItems {
             let devices = await ToolRunner.output("/usr/bin/xcrun", ["simctl", "list", "devices", "-j"])
         else { return [] }
 
-        var items = runtimeItems(runtimesJSON: runtimes, devicesJSON: devices)
+        var items = runtimeItems(runtimesJSON: runtimes, devicesJSON: devices) + deviceItems(devicesJSON: devices)
         let unavailable = unavailableDevices(devicesJSON: devices)
         if !unavailable.isEmpty {
             var bytes: Int64 = 0
@@ -76,6 +76,55 @@ public enum SimulatorItems {
         let name: String
         let isAvailable: Bool?
         let dataPath: String?
+        let udid: String?
+        let state: String?
+        let lastBootedAt: String?
+        let dataPathSize: Int64?
+    }
+
+    /// 쓸 수 있는 시뮬레이터 하나하나. 안에 설치한 앱과 데이터가 있어 판단 필요 등급이다.
+    /// 크기는 simctl이 알려 준 데이터 크기(`dataPathSize`)다.
+    static func deviceItems(devicesJSON: Data) -> [SystemItem] {
+        guard let list = try? JSONDecoder().decode(DeviceList.self, from: devicesJSON) else { return [] }
+        let dateParser = ISO8601DateFormatter()
+        return list.devices.flatMap { runtimeIdentifier, devices in
+            devices.compactMap { device -> SystemItem? in
+                guard device.isAvailable != false, let udid = device.udid, let dataPath = device.dataPath else { return nil }
+                let runtime = runtimeName(runtimeIdentifier)
+                let lastBooted: Date? = device.lastBootedAt.flatMap(dateParser.date(from:))
+                let lastBootedText = lastBooted?.formatted(date: .numeric, time: .omitted) ?? "기록 없음"
+                var parts: [String] = ["마지막 실행 " + lastBootedText]
+                if device.state == "Booted" {
+                    parts.append("지금 켜져 있음 (끈 뒤 지울 수 있음)")
+                }
+                let detail = parts.joined(separator: " · ")
+                return SystemItem(
+                    id: "simulator.device." + udid,
+                    ruleID: "simulator.device",
+                    tool: "시뮬레이터 기기",
+                    title: "\(device.name) · \(runtime)",
+                    detail: detail,
+                    grade: .review,
+                    restore: "Xcode > Window > Devices and Simulators에서 다시 만들 수 있다. 안에 설치한 앱과 데이터는 사라진다",
+                    bytes: device.dataPathSize ?? 0,
+                    path: (dataPath as NSString).deletingLastPathComponent,
+                    command: CleanupCommand(
+                        executable: "/usr/bin/xcrun",
+                        arguments: ["simctl", "delete", udid],
+                        summary: "\(device.name) 시뮬레이터를 CoreSimulator를 거쳐 지움"
+                    ),
+                    selector: udid
+                )
+            }
+        }
+        .sorted { $0.bytes > $1.bytes }
+    }
+
+    /// `com.apple.CoreSimulator.SimRuntime.iOS-26-0` → `iOS 26.0`
+    private static func runtimeName(_ runtimeIdentifier: String) -> String {
+        let parts = (runtimeIdentifier.split(separator: ".").last ?? "").split(separator: "-")
+        let platform = platformName(runtimeIdentifier)
+        return parts.count > 1 ? "\(platform) \(parts.dropFirst().joined(separator: "."))" : platform
     }
 
     /// `simctl runtime list -j`와 `simctl list devices -j` 출력으로 런타임 항목을 만든다.
@@ -235,18 +284,21 @@ extension DeletionTarget {
 
 /// 외부 명령을 실행하고 표준 출력을 받는다. 블로킹이라 협력 스레드 풀 밖에서 돌린다.
 enum ToolRunner {
-    static func output(_ executable: String, _ arguments: [String]) async -> Data? {
+    static func output(_ executable: String, _ arguments: [String], environment: [String: String] = [:]) async -> Data? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: runBlocking(executable, arguments))
+                continuation.resume(returning: runBlocking(executable, arguments, environment: environment))
             }
         }
     }
 
-    private static func runBlocking(_ executable: String, _ arguments: [String]) -> Data? {
+    private static func runBlocking(_ executable: String, _ arguments: [String], environment: [String: String]) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

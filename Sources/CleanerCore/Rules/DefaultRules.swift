@@ -140,6 +140,11 @@ extension [CleanupRule] {
             scope: .location("Library/Developer/Xcode/UserData/IB Support")
         ),
         CleanupRule(
+            id: "xcode.playgroundDevices", tool: "Xcode", title: "Playground 시뮬레이터", grade: .cache,
+            restore: "Playground를 실행하면 다시 생김",
+            scope: .location("Library/Developer/XCPGDevices")
+        ),
+        CleanupRule(
             id: "xcode.documentationCache", tool: "Xcode", title: "문서 캐시", grade: .cache,
             restore: "문서를 열면 다시 내려받음",
             scope: .location("Library/Developer/Xcode/DocumentationCache")
@@ -295,6 +300,23 @@ extension [CleanupRule] {
                         "DawnWebGPUCache", "GrShaderCache", "ShaderCache"]
             )
         ),
+        // AI 코딩 도구의 대화 기록. 다시 생기지 않으므로 판단 필요로 둔다.
+        CleanupRule(
+            id: "codex.sessions", tool: "AI 대화 기록", title: "Codex 대화 기록", grade: .review,
+            restore: "되돌릴 수 없음. 지난 Codex 대화를 다시 보거나 이어 할 수 없게 된다",
+            scope: .location(".codex/sessions")
+        ),
+        CleanupRule(
+            id: "claude.projects", tool: "AI 대화 기록", title: "Claude Code 대화 기록", grade: .review,
+            restore: "되돌릴 수 없음. 이 프로젝트의 지난 대화를 claude --resume으로 이어 할 수 없게 된다",
+            scope: .contentsOf(".claude/projects")
+        ),
+        // App Store 앱처럼 샌드박스 안에서 도는 앱은 캐시를 자기 컨테이너 안에 둔다. 전체 디스크 접근 권한이 있어야 읽힌다.
+        CleanupRule(
+            id: "apps.containerCache", tool: "앱 캐시", title: "샌드박스 앱 캐시", grade: .cache,
+            restore: "앱을 실행하면 다시 생김 (앱을 끈 뒤 지우는 것이 안전함)",
+            scope: .nestedContentsOf("Library/Containers", names: ["Data/Library/Caches"], skippingPrefixes: ["com.apple."])
+        ),
         CleanupRule(
             id: "docker.vm", tool: "Docker", title: "Docker 가상 머신 디스크", grade: .review,
             restore: "지운 이미지는 docker pull로 다시 받음. 멈춘 컨테이너와 빌드 캐시도 사라진다",
@@ -305,7 +327,7 @@ extension [CleanupRule] {
                 summary: "쓰지 않는 이미지·멈춘 컨테이너·빌드 캐시를 지움 (Docker Desktop이 켜져 있어야 함, 볼륨은 남김)"
             )
         ),
-    ] + userCacheRules
+    ] + userCacheRules + userTemporaryRules
 
     /// macOS가 사용자별로 두는 캐시 폴더(`/var/folders/…/C`) 규칙. 홈 밖에 있어 따로 스캔해야 찾을 수 있다.
     private static var userCacheRules: [CleanupRule] {
@@ -325,12 +347,41 @@ extension [CleanupRule] {
     }
 }
 
+extension [CleanupRule] {
+    /// 사용자 임시 폴더(`/var/folders/…/T`)에 남는 것. 지금 쓰는 것을 건드리지 않도록 하루 넘게 그대로인 것만 고른다.
+    fileprivate static var userTemporaryRules: [CleanupRule] {
+        guard let directory = UserDirectories.temporaryDirectory else { return [] }
+        let oneDay: Double = 24 * 60 * 60
+        return [
+            // Electron 앱(Claude, Slack 등)의 업데이터(Squirrel ShipIt)가 내려받고 남긴 앱 사본.
+            CleanupRule(
+                id: "apps.updateLeftovers", tool: "앱 업데이트", title: "앱 업데이트 잔여물", grade: .cache,
+                restore: "앱이 다음에 업데이트할 때 필요하면 다시 내려받음",
+                scope: .contentsOf(directory),
+                namePatterns: ["*.ShipIt.*"],
+                minimumAge: oneDay
+            ),
+        // Codex 임시 항목은 폴더가 아니라 파일이라 규칙 대신 TemporaryFileItems가 찾는다.
+        ]
+    }
+}
+
 /// macOS가 사용자마다 따로 정하는 폴더.
 public enum UserDirectories {
     /// `/var/folders/…/C`. 심볼릭 링크를 푼 실제 경로(`/private/var/…`)로 돌려준다.
     public static var cacheDirectory: String? {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buffer, buffer.count) > 0,
+              let resolved = realpath(buffer, nil)
+        else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// `/var/folders/…/T`. 심볼릭 링크를 푼 실제 경로로 돌려준다.
+    public static var temporaryDirectory: String? {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count) > 0,
               let resolved = realpath(buffer, nil)
         else { return nil }
         defer { free(resolved) }

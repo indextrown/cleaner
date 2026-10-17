@@ -50,7 +50,7 @@ enum CleanupPhase: Int, CaseIterable {
         switch self {
         case .projects: "프로젝트 폴더의 빌드 산출물"
         case .locations: "캐시 위치"
-        case .simulators: "시뮬레이터 런타임과 남은 에셋"
+        case .simulators: "시뮬레이터·Homebrew 항목"
         }
     }
 }
@@ -65,8 +65,12 @@ struct CleanupEntry: Identifiable {
     let groupNote: String?
     /// 프로젝트 묶음이면 그 폴더 경로. 아이콘을 보여 줄 때 쓴다.
     let groupPath: String?
-    let title: String
+    var title: String
     let detail: String
+    /// 지우면 어떻게 되는지. 규칙에 적힌 되살리는 방법이다.
+    let restore: String?
+    /// 크기가 범위로 보일 때(복제본이 데이터를 공유할 때) 왜 크게 보이는지 설명한다.
+    let sizeNote: String?
     let bytes: Int64
     let unsharedBytes: Int64
     /// 이 항목을 쓰는 것으로 보이는 실행 중인 앱 이름.
@@ -89,6 +93,7 @@ struct CleanupGroup: Identifiable {
     let entries: [CleanupEntry]
 
     var bytes: Int64 { entries.reduce(0) { $0 + $1.bytes } }
+    var unsharedBytes: Int64 { entries.reduce(0) { $0 + $1.unsharedBytes } }
 }
 
 enum SelectionState {
@@ -199,7 +204,7 @@ final class CleanupModel {
         if Task.isCancelled { return }
 
         phase = .simulators
-        let systemItems = await SimulatorItems.find()
+        let systemItems = await SystemItems.find()
         leftoverAssets = await SimulatorItems.leftoverRuntimeAssets()
 
         skippedRoots = skipped
@@ -250,7 +255,8 @@ final class CleanupModel {
 
     private static func entries(report: CleanupReport, systemItems: [SystemItem]) -> [CleanupEntry] {
         let runningApplications = NSWorkspace.shared.runningApplications
-        var entries = report.candidates.map { candidate in
+        // 이미 비어 있는 폴더(0KB)는 지워도 얻는 게 없으므로 보여 주지 않는다.
+        var entries = report.candidates.filter { $0.bytes > 0 }.map { candidate in
             let section: CleanupSection = switch candidate.grade {
             case .buildArtifact: .buildArtifact
             case .cache: .cache
@@ -268,7 +274,7 @@ final class CleanupModel {
             let groupNote: String?
             let groupPath: String?
             let title: String
-            let detail: String
+            var detail: String
             switch candidate.group {
             case .project(let root, let isGitRepository):
                 groupID = "\(section.rawValue)/project/\(root)"
@@ -282,11 +288,42 @@ final class CleanupModel {
                 groupTitle = name
                 groupNote = nil
                 groupPath = nil
-                // 도구 위치 규칙의 근거는 경로 그 자체라서, 제목에는 폴더 이름만 두고 경로는 설명 줄에 한 번만 쓴다.
-                let folder = (candidate.path as NSString).lastPathComponent
-                let owner = ((candidate.path as NSString).deletingLastPathComponent as NSString).lastPathComponent
-                title = candidate.rule.id == "apps.electronCache" ? "\(owner) · \(folder)" : folder
-                detail = ([candidate.rule.title, abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                // 도구 위치 규칙의 근거는 경로 그 자체라서, 경로는 설명 줄에 한 번만 쓴다.
+                if case .location = candidate.rule.scope {
+                    // 고정 경로 하나를 가리키는 규칙은 폴더 이름(Caches 등)보다 규칙 이름이 뜻을 잘 알려 준다.
+                    title = candidate.rule.title
+                    detail = ([abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                } else if candidate.rule.id == "apps.containerCache", let bundle = containerBundleIdentifier(candidate.path) {
+                    // 컨테이너 캐시는 폴더 이름이 모두 Caches라서 앱 이름(없으면 번들 ID)을 제목으로 쓴다.
+                    title = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+                        .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+                        ?? bundle
+                    detail = ([candidate.rule.title, abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                } else if candidate.rule.id == "apps.updateLeftovers" {
+                    // `com.anthropic.claudefordesktop.ShipIt.Jwg7rwX1` → "Claude 업데이트" (설치된 앱이 없으면 번들 ID)
+                    let folder = (candidate.path as NSString).lastPathComponent
+                    let bundle = folder.components(separatedBy: ".ShipIt").first ?? folder
+                    let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+                        .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+                    title = "\(name ?? bundle) 업데이트"
+                    detail = ([candidate.rule.title, abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                } else if candidate.rule.id == "claude.projects" {
+                    // Claude Code는 프로젝트 경로의 /를 -로 바꾼 이름을 쓴다. 홈 부분은 떼고 보여 준다.
+                    let folder = (candidate.path as NSString).lastPathComponent
+                    let homePrefix = NSHomeDirectory().replacingOccurrences(of: "/", with: "-") + "-"
+                    title = folder.hasPrefix(homePrefix) ? "~/" + folder.dropFirst(homePrefix.count) : folder
+                    detail = ([candidate.rule.title, abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                } else {
+                    let folder = (candidate.path as NSString).lastPathComponent
+                    let owner = ((candidate.path as NSString).deletingLastPathComponent as NSString).lastPathComponent
+                    title = candidate.rule.id == "apps.electronCache" ? "\(owner) · \(folder)" : folder
+                    detail = ([candidate.rule.title, abbreviate(candidate.path)] + notes).joined(separator: " · ")
+                }
+            }
+            let deviceCount = simulatorDeviceRules.contains(candidate.rule.id)
+                ? simulatorDeviceCount(at: candidate.path) : nil
+            if let deviceCount {
+                detail += " · 시뮬레이터 \(deviceCount)대"
             }
             return CleanupEntry(
                 id: candidate.path,
@@ -297,6 +334,8 @@ final class CleanupModel {
                 groupPath: groupPath,
                 title: title,
                 detail: detail,
+                restore: candidate.rule.restore,
+                sizeNote: sizeNote(minimum: candidate.unsharedBytes, maximum: candidate.bytes, deviceCount: deviceCount),
                 bytes: candidate.bytes,
                 unsharedBytes: candidate.unsharedBytes,
                 runningApplication: runningApplication(for: candidate, in: runningApplications),
@@ -314,6 +353,8 @@ final class CleanupModel {
                 groupPath: nil,
                 title: item.title,
                 detail: item.detail,
+                restore: nil,
+                sizeNote: nil,
                 bytes: item.bytes,
                 unsharedBytes: item.bytes,
                 runningApplication: nil,
@@ -321,7 +362,51 @@ final class CleanupModel {
                 systemItem: item
             )
         }
-        return entries
+        return distinguishingDuplicateTitles(entries)
+    }
+
+    /// `~/Library/Containers/<번들 ID>/Data/Library/Caches` → 번들 ID
+    private static func containerBundleIdentifier(_ path: String) -> String? {
+        let components = path.split(separator: "/")
+        guard let index = components.lastIndex(of: "Containers"), index + 1 < components.count else { return nil }
+        return String(components[index + 1])
+    }
+
+    /// 시뮬레이터 기기 묶음(device set)을 가리키는 규칙.
+    private static let simulatorDeviceRules: Set<String> = [
+        "xcode.testDevices", "xcode.previews", "xcode.ibSupport", "xcode.playgroundDevices",
+    ]
+
+    /// device set 안의 시뮬레이터 수. 기기 폴더는 바로 아래나 `Simulator Devices` 아래에 `device.plist`와 함께 있다.
+    private static func simulatorDeviceCount(at path: String) -> Int? {
+        let fileManager = FileManager.default
+        for directory in [path, path + "/Simulator Devices"] {
+            guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
+            let count = names.filter { fileManager.fileExists(atPath: "\(directory)/\($0)/device.plist") }.count
+            if count > 0 { return count }
+        }
+        return nil
+    }
+
+    private static func sizeNote(minimum: Int64, maximum: Int64, deviceCount: Int?) -> String? {
+        guard Format.isRange(minimum: minimum, maximum: maximum) else { return nil }
+        let subject = deviceCount.map { "시뮬레이터 \($0)대가 원본과 같은 데이터를 함께 쓰는 APFS 복제본이라" }
+            ?? "다른 파일과 데이터를 함께 쓰는 APFS 복제본이 들어 있어"
+        return "\(subject) 하나씩 따로 세면 \(Format.bytes(maximum))이지만, 지우면 실제로 비워지는 건 \(Format.bytes(minimum)) 정도입니다."
+    }
+
+    /// 같은 묶음 안에서 제목이 겹치면(예: `~/Library/Caches/com.foo`와 `/var/folders/…/C/com.foo`)
+    /// 상위 폴더 경로를 덧붙여 구분한다.
+    private static func distinguishingDuplicateTitles(_ entries: [CleanupEntry]) -> [CleanupEntry] {
+        let counts = Dictionary(grouping: entries) { "\($0.groupID)\n\($0.title)" }.mapValues(\.count)
+        return entries.map { entry in
+            guard counts["\(entry.groupID)\n\(entry.title)", default: 0] > 1,
+                  let path = entry.candidate?.path ?? entry.systemItem?.path
+            else { return entry }
+            var entry = entry
+            entry.title += " · " + abbreviate((path as NSString).deletingLastPathComponent)
+            return entry
+        }
     }
 
     /// 실행 중인 앱의 캐시인지 이름으로 추정한다. Electron 캐시는 `Application Support/<앱 이름>/Cache`,
@@ -335,6 +420,9 @@ final class CleanupModel {
         case "apps.electronCache":
             let owner = ((candidate.path as NSString).deletingLastPathComponent as NSString).lastPathComponent.lowercased()
             return applications.first { $0.localizedName?.lowercased() == owner }?.localizedName
+        case "apps.containerCache":
+            guard let bundle = containerBundleIdentifier(candidate.path)?.lowercased() else { return nil }
+            return applications.first { $0.bundleIdentifier?.lowercased() == bundle }?.localizedName
         case "apps.cache", "system.userCaches":
             return applications.first { application in
                 guard let bundleIdentifier = application.bundleIdentifier?.lowercased() else { return false }

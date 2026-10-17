@@ -2,7 +2,7 @@
 
 맥 저장공간 청소 도구다. 빌드 산출물·캐시를 프로젝트 계층별로 찾아 지우고, 큰 폴더를 크기순으로 탐색한다.
 
-현재는 CleanerCore, CLI(스캔, 정리 후보, 삭제, 시스템 항목, 앱 목록·제거), SwiftUI 앱(정리, 큰 폴더 탐색, 앱 목록·제거)까지 구현되어 있다. CLI의 `clean`과 `uninstall`은 `--yes`를 주지 않으면 미리보기만 한다.
+현재는 CleanerCore, CLI(스캔, 정리 후보, 삭제, 시스템 항목, 앱 목록·제거), SwiftUI 앱(정리, 시스템 데이터 분석, 큰 폴더 탐색, 앱 목록·제거)까지 구현되어 있다. CLI의 `clean`과 `uninstall`은 `--yes`를 주지 않으면 미리보기만 한다.
 
 ## 구성
 
@@ -27,13 +27,15 @@ open build/Cleaner.app
 - **서명**: `Projects/App/Configuration.xcconfig`가 `Signing.xcconfig`(git 제외)를 선택적으로 불러온다. `Signing.example.xcconfig`를 복사해 `CLEANER_CODE_SIGN_IDENTITY`와 `DEVELOPMENT_TEAM`을 적는다. 고정 인증서로 서명해야 macOS가 다시 빌드한 앱을 같은 앱으로 보고, 한 번 준 권한을 유지한다. 파일이 없으면 ad-hoc 서명이 되어 빌드할 때마다 권한을 새로 묻는다.
 - **전체 디스크 접근 권한**: 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에서 Cleaner를 한 번 켜 두면 폴더마다 허용을 묻지 않는다. 권한이 없으면 데스크탑·문서·다운로드, 다른 앱의 데이터, iCloud, 메일 같은 보호 폴더는 건너뛰고 "권한 필요"로 보여 준다. 권한 없이 그 폴더를 읽으면 macOS가 확인 창을 띄우고, 사용자가 답할 때까지 스캔이 멈추기 때문이다.
 - **정리**: 앱을 열면 처음 보이는 화면이다. "프로젝트 폴더"에서 고른 폴더(여러 개 가능, 앱에 저장됨)를 스캔해 빌드 산출물을 찾고, 그 밖의 알려진 캐시 위치와 시뮬레이터 런타임을 함께 찾는다. 위쪽에는 디스크 사용량 막대(고른 항목을 지우면 확실히 비워지는 만큼을 초록색으로 겹침)와 빌드 산출물, 캐시, 판단 필요, 시스템 항목 네 등급의 카드를 둔다. 카드를 누르면 아래 목록이 그 등급으로 바뀌고, 목록은 프로젝트(git 저장소)나 도구 단위로 묶는다. 등급·묶음·항목마다 체크박스로 고른다.
+  - **크기 표시**: 카드, 묶음, 항목의 크기는 "1.41 GB ~ 192.62 GB"처럼 범위로 보여 준다. 앞은 지우면 확실히 비워지는 크기(공유 제외), 뒤는 APFS 클론과 함께 쓰는 데이터까지 센 크기다. 둘이 거의 같으면 하나만 보여 준다. 항목마다 지우면 어떻게 되는지와, 범위가 크면 왜 크게 보이는지(예: 병렬 테스트용 시뮬레이터 복제본 26대)를 함께 적는다. 이미 비어 있는 폴더(0KB)는 숨긴다.
   - **기본 선택**: 빌드 산출물과 캐시는 모두 고르고, 판단 필요와 런타임은 고르지 않는다. 실행 중인 앱의 캐시(Electron 앱 폴더 이름이나 캐시 폴더의 번들 ID로 찾음)는 "실행 중" 표시를 붙이고 고르지 않는다.
   - **지우기**: 아래쪽 "정리…"를 누르면 선택한 개수와 비워질 크기(최소~최대)를 확인한 뒤 지운다. "휴지통으로"를 켜면 휴지통으로 옮긴다. 정리 규칙과 허용 범위, 로그는 CLI와 같다. 런타임처럼 도구가 뒤에서 마저 지우는 항목은 몇 분 뒤 공간이 더 늘어난다고 알린다.
   - **남은 런타임 에셋**: 등록이 풀렸는데 `/System/Library/AssetsV2`에 남은 런타임 에셋을 따로 보여 준다. SIP로 보호되어 앱에서는 지우지 못한다.
   - **권한**: 전체 디스크 접근 권한이 없으면 보호 폴더 안에 있는 프로젝트 폴더는 건너뛰고 화면에 알린다.
+- **시스템 데이터**: 설정 앱의 "시스템 데이터"가 무엇으로 이루어졌는지 데이터 볼륨 전체를 읽어 칸으로 나눠 보여 준다(30초쯤). 시뮬레이터 런타임, 샌드박스 앱 데이터, 앱 지원 파일, Xcode·시뮬레이터 기기, 홈의 숨김 폴더, Homebrew, 스왑·임시 파일, 파일로 보이지 않는 공간(볼륨 사용량 − 읽은 파일 합계) 등이다. 칸마다 정리 가능 / 앱 데이터 / 개발 도구 / macOS 관리 / 읽을 수 없음을 붙이고, 정리 탭이 찾은 후보 중 그 칸에 드는 양을 함께 보여 준다. 설정 앱이 어떤 폴더를 시스템 데이터로 치는지는 공개되어 있지 않아 대략적인 분류다.
 - **큰 폴더 탐색**: 홈, 디스크 전체(데이터 볼륨), 고른 폴더를 스캔해 크기순 표로 보여 준다. 폴더를 더블클릭하면 들어가고, 고른 항목은 휴지통으로 옮긴다(홈과 시뮬레이터 폴더 아래만, 홈의 주요 폴더 자체는 막음). 위쪽에는 디스크 사용량, 이 볼륨과 macOS·Preboot·Recovery·VM 볼륨의 크기, 스캔한 크기를 함께 보여 준다.
 - **앱**: 열 머리를 눌러 크기, 최소 크기, 추가된 날짜, 마지막 사용일, 이름으로 오름차순·내림차순 정렬한다. 고른 앱은 남은 데이터를 확인한 뒤 휴지통으로 옮긴다. root 소유 앱(App Store 앱 등)은 Finder를 거쳐 옮기므로 Finder가 관리자 암호를 묻는다.
-- **확인용 실행 인자**: `-section cleanup|explorer|applications`, `-cleanup YES`(정리 후보를 바로 찾음), `-projectRoots '("~/Projects")'`(프로젝트 폴더 지정), `-cleanupReport <파일>`(정리 후보 요약 JSON), `-cleanupSection cache`(처음 볼 등급), `-expandAll YES`(모든 묶음 펼침), `-scan ~/Projects`(또는 `data`), `-scanReport <파일>`(스캔 요약 JSON), `-snapshot <파일>`(창을 PNG로 저장, 가려진 창은 하얗게 나올 수 있어 `screencapture -l <창 번호>`가 더 확실함), `-uninstallPreview <앱 이름>`(제거 창만 연다).
+- **확인용 실행 인자**: `-section cleanup|systemData|explorer|applications`, `-systemData YES`(시스템 데이터 분석을 바로 시작), `-cleanup YES`(정리 후보를 바로 찾음), `-projectRoots '("~/Projects")'`(프로젝트 폴더 지정), `-cleanupReport <파일>`(정리 후보 요약 JSON), `-cleanupSection cache`(처음 볼 등급), `-expandAll YES`(모든 묶음 펼침), `-scan ~/Projects`(또는 `data`), `-scanReport <파일>`(스캔 요약 JSON), `-snapshot <파일>`(창을 PNG로 저장, 가려진 창은 하얗게 나올 수 있어 `screencapture -l <창 번호>`가 더 확실함), `-uninstallPreview <앱 이름>`(제거 창만 연다).
 
 ## 실행
 
@@ -69,9 +71,16 @@ swift build -c release
 | --- | --- | --- |
 | 시뮬레이터 런타임 | 판단 필요 | `xcrun simctl runtime delete <ID>`. `cleaner clean ~ --runtime 18.2`처럼 버전으로 고른다 |
 | 쓸 수 없는 시뮬레이터 | 캐시 | `xcrun simctl delete unavailable` |
+| 시뮬레이터 기기(하나씩) | 판단 필요 | `xcrun simctl delete <UDID>`. 안에 설치한 앱과 데이터가 사라진다. `cleaner clean ~ --device <UDID>`로 고른다. 크기는 simctl이 알려 준 데이터 크기 |
+| Codex 임시 파일 (`$TMPDIR/.com.openai.codex.*`) | 캐시 | 하루 넘게 바뀌지 않은 파일만 센다. `find <임시 폴더> -maxdepth 1 -type f -name '.com.openai.codex.*' -mmin +1440 -delete`로 같은 조건의 파일만 지운다. 규칙은 폴더 단위라 수천 개로 흩어진 파일은 이렇게 따로 센다 |
+| Homebrew 옛 버전·설치 파일 | 캐시 | `brew cleanup`. 크기는 `brew cleanup --dry-run`이 알려 준 값이고, 설치된 패키지는 그대로 둔다 |
 | 시뮬레이터 dyld 공유 캐시 | 캐시 | `xcrun simctl runtime dyld_shared_cache remove --all` (root 소유라 직접 지우지 않음) |
 | Instruments 캐시, `/var/folders/…/C`의 앱 캐시 | 캐시 | 지움 (`com.apple.*`은 Instruments만) |
 | 실기기 설치 차분 캐시 (CoreDevice) | 캐시 | 지움 |
+| Playground 시뮬레이터 (`~/Library/Developer/XCPGDevices`) | 캐시 | 지움 |
+| 샌드박스 앱 캐시 (`~/Library/Containers/<앱>/Data/Library/Caches`, `com.apple.*` 제외) | 캐시 | 지움. 전체 디스크 접근 권한이 있어야 찾는다 |
+| 앱 업데이트 잔여물 (`$TMPDIR/*.ShipIt.*`) | 캐시 | 지움. Electron 앱 업데이터(Squirrel ShipIt)가 내려받고 남긴 앱 사본. 하루 넘게 바뀌지 않은 것만 고른다 |
+| AI 대화 기록 (`~/.codex/sessions`, `~/.claude/projects/<프로젝트>`) | 판단 필요 | 지움. 다시 생기지 않는다. 지우면 지난 대화를 다시 보거나 이어 할 수 없다 |
 | Electron 앱 캐시 (`Application Support/<앱>/Cache` 등) | 캐시 | 지움 |
 | Docker 가상 머신 디스크 | 판단 필요 | `docker system prune --all --force` (Docker Desktop이 켜져 있어야 함) |
 
@@ -123,6 +132,7 @@ swift build -c release
 
 - **마커**: 프로젝트 규칙은 이름만으로 판단하지 않는다. `node_modules` 옆에 `package.json`이 있어야 하고, `build`는 옆에 `build.gradle`·`pubspec.yaml`·`*.xcodeproj` 같은 빌드 도구 파일이 있어야 한다. `swift/utils/coverage` 같은 소스 폴더를 지우지 않기 위해서다.
 - **프로젝트 폴더 안에서만**: 프로젝트 규칙은 `--project`로 준 폴더 안에서만 찾는다. 숨김 폴더, `~/Library`, 앱 번들 안으로는 들어가지 않는다. `~/.vscode/extensions/*/node_modules`처럼 다시 만들 수 없는 설치물을 보호한다.
+- **이름·시간 조건**: 위치 규칙은 이름 패턴(`*.ShipIt.*`처럼 fnmatch 형식)과 최소 경과 시간을 줄 수 있다. 정한 시간 안에 바뀐 항목은 쓰는 중일 수 있어 "최근에 바뀜"으로 빼 둔다.
 - **위치 규칙**: 캐시는 알려진 경로(`~/Library/Caches/*`, `~/.npm/_cacache` 등)에서만 찾는다. `com.apple.*` 캐시는 macOS가 관리하므로 빼고, 스캔도 하지 않는다(다른 규칙이 직접 가리키는 Instruments 캐시는 예외). `~/Library/Caches/com.apple.Music`처럼 열기만 해도 권한 확인 창을 기다리며 멈추는 폴더가 있기 때문이다.
 - **git 추적**: git이 추적하는 파일이 든 후보는 "판단 필요"로 내린다. 커밋된 `dist`는 소스일 수 있고, `.build/index-build`처럼 산출물을 실수로 커밋한 경우도 있어 사람이 보게 한다.
 - **묶음**: 프로젝트 산출물은 가장 가까운 git 저장소 단위로, 캐시는 도구 단위로 묶는다. Xcode DerivedData는 `info.plist`의 `WorkspacePath`로 원본 프로젝트를 찾고, 원본이 지워졌는지 표시한다.
@@ -149,7 +159,7 @@ swift test
 
 ## Full Disk Access
 
-`~/.Trash`, `~/Library/Messages`, 다른 앱의 컨테이너 일부는 Full Disk Access가 없으면 읽을 수 없다. 읽지 못한 경로는 스캔 결과의 `issues`에 남는다. 권한은 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에서 직접 부여한다.
+`~/.Trash`, `~/Library/Messages`, 다른 앱의 컨테이너 일부는 Full Disk Access가 없으면 읽을 수 없다. 앱과 CLI 모두 권한이 없으면 이런 보호 폴더를 아예 열지 않고 건너뛴다(열려고 하면 macOS가 권한 창을 띄우고 답할 때까지 멈추기 때문이다). 읽지 못한 경로는 스캔 결과의 `issues`에 남는다. 권한은 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에서 직접 부여한다.
 
 ## 라이선스
 

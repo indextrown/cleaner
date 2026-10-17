@@ -115,6 +115,12 @@ struct CleanupView: View {
                     }
                 }
             }
+            if model.entries.contains(where: { Format.isRange(minimum: $0.unsharedBytes, maximum: $0.bytes) }) {
+                Label("\"1.41 GB ~ 192.62 GB\"처럼 범위로 보이는 크기: " + Format.byteRangeHelp, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
             if !model.skippedRoots.isEmpty {
                 Label(
                     "권한이 없어 건너뛴 프로젝트 폴더: " + model.skippedRoots.map(CleanupModel.abbreviate).joined(separator: ", "),
@@ -265,13 +271,15 @@ struct CleanupView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 2) {
-                Text(Format.bytes(group.bytes))
+                Text(Format.byteRange(minimum: group.unsharedBytes, maximum: group.bytes))
                     .monospacedDigit()
+                    .help(Format.byteRangeHelp)
                 Text("\(group.entries.count)개")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .frame(width: RowLayout.size, alignment: .trailing)
+            .fixedSize()
+            .frame(minWidth: RowLayout.size, alignment: .trailing)
         }
         .padding(.horizontal, RowLayout.edge)
         .padding(.vertical, 9)
@@ -297,6 +305,18 @@ struct CleanupView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                if let sizeNote = entry.sizeNote {
+                    Label(sizeNote, systemImage: "square.on.square")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+                if let restore = entry.restore {
+                    Label("지우면: \(restore)", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let path {
@@ -307,18 +327,11 @@ struct CleanupView: View {
                 .foregroundStyle(.secondary)
                 .help("Finder에서 보기")
             }
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(Format.bytes(entry.bytes))
-                    .monospacedDigit()
-                if entry.unsharedBytes * 10 < entry.bytes * 9 {
-                    Text("최소 \(Format.bytes(entry.unsharedBytes))")
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.orange)
-                        .help("APFS 클론과 공유하는 블록을 뺀 크기입니다. 지우면 최소한 이만큼은 비워집니다.")
-                }
-            }
-            .frame(width: RowLayout.size, alignment: .trailing)
+            Text(Format.byteRange(minimum: entry.unsharedBytes, maximum: entry.bytes))
+                .monospacedDigit()
+                .help(Format.byteRangeHelp)
+                .fixedSize()
+                .frame(minWidth: RowLayout.size, alignment: .trailing)
         }
         .padding(.leading, RowLayout.iconLeading)
         .padding(.trailing, RowLayout.edge)
@@ -606,20 +619,12 @@ private struct SectionTile: View {
                         .font(.headline)
                         .lineLimit(1)
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(Format.bytes(bytes))
-                        .font(.title2.weight(.semibold))
-                        .monospacedDigit()
-                    if unsharedBytes * 10 < bytes * 9 {
-                        Text("최소 \(Format.bytes(unsharedBytes))")
-                            .font(.caption)
-                            .monospacedDigit()
-                            .foregroundStyle(.orange)
-                            .help("APFS 클론과 공유하는 블록을 뺀 크기입니다. 지우면 최소한 이만큼은 비워집니다.")
-                    }
-                }
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                Text(Format.byteRange(minimum: unsharedBytes, maximum: bytes))
+                    .font(.title2.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .help(Format.byteRangeHelp)
                 Text(count == 0 ? "찾은 것 없음" : "\(count)개 중 \(selectedCount)개 선택")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -650,6 +655,8 @@ private struct GroupIcon: View {
         "Xcode": "com.apple.dt.Xcode",
         "Android": "com.google.android.studio",
         "Docker": "com.docker.docker",
+        "시뮬레이터 기기": "com.apple.iphonesimulator",
+        "Codex": "com.openai.codex",
     ]
 
     var body: some View {
@@ -685,13 +692,18 @@ private struct GroupIcon: View {
         case "Android": "iphone"
         case "앱 캐시": "square.stack.3d.up.fill"
         case "기타 도구 캐시": "wrench.and.screwdriver.fill"
+        case "Homebrew": "mug.fill"
+        case "AI 대화 기록": "bubble.left.and.bubble.right.fill"
+        case "앱 업데이트": "arrow.down.app.fill"
+        case "Codex": "terminal.fill"
+        case "시뮬레이터 기기": "iphone"
         default: "folder.fill"
         }
     }
 }
 
 /// 묶음 크기를 가장 큰 묶음과 견준 막대.
-private struct SizeBar: View {
+struct SizeBar: View {
     let fraction: Double
     let tint: Color
 

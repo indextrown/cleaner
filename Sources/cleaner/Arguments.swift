@@ -6,7 +6,7 @@ let usage = """
       cleaner scan <경로> [--threads N] [--depth N] [--top N]
       cleaner candidates <경로> [--project <폴더>]... [--threads N] [--top N] [--tsv]
       cleaner clean <경로> [--project <폴더>]... [--grade 등급]... [--rule ID]... [--under <폴더>]...
-                    [--exclude <경로>]... [--runtime 버전]... [--trash] [--yes]
+                    [--exclude <경로>]... [--runtime 버전]... [--device UDID]... [--trash] [--yes]
       cleaner apps [--sort name|size|unshared|added|used] [--asc|--desc] [--top N]
       cleaner uninstall <앱 이름|번들 ID|경로>... [--leftovers] [--yes]
 
@@ -28,6 +28,7 @@ let usage = """
       --under 폴더     clean: 이 폴더 아래의 후보만 고른다
       --exclude 경로   clean: 이 경로와 그 아래의 후보는 고르지 않는다 (실행 중인 앱의 캐시를 뺄 때 등)
       --runtime 버전   clean: 이 버전의 시뮬레이터 런타임만 고른다 (예: 18.2). 주면 다른 후보는 고르지 않는다
+      --device UDID    clean: 이 시뮬레이터만 지운다. --runtime과 함께 줄 수 있고, 주면 다른 후보는 고르지 않는다
       --trash          clean: 바로 지우지 않고 휴지통으로 옮긴다. 휴지통을 비워야 공간이 생긴다
       --yes            clean, uninstall: 미리보기에 나온 대로 실제로 실행한다
       --sort 기준      apps: name(이름), size(크기 최대), unshared(크기 최소), added(추가된 날짜), used(마지막 사용)
@@ -62,6 +63,7 @@ struct Arguments {
     var trash = false
     var yes = false
     var runtimes: Set<String> = []
+    var devices: Set<String> = []
     var sortKey = ApplicationSortKey.size
     var sortOrder: SortOrder = .reverse
     var leftovers = false
@@ -96,12 +98,13 @@ struct Arguments {
                 sortOrder = .reverse
             case "--leftovers":
                 leftovers = true
-            case "--project", "--rule", "--under", "--exclude", "--runtime":
+            case "--project", "--rule", "--under", "--exclude", "--runtime", "--device":
                 guard let value = remaining.popFirst() else { return nil }
                 switch argument {
                 case "--project": projects.append(value)
                 case "--rule": rules.insert(value)
                 case "--runtime": runtimes.insert(value)
+                case "--device": devices.insert(value.uppercased())
                 case "--exclude": excluded.append(value)
                 default: under.append(value)
                 }

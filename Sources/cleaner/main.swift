@@ -26,7 +26,7 @@ do {
 }
 
 func runScanCommand(_ arguments: Arguments, progress: ScanProgress) async throws {
-    let scanner = DiskScanner(options: ScanOptions(threadCount: arguments.threads))
+    let scanner = DiskScanner(options: scanOptions(arguments))
     let result = try await scanner.scan(arguments.path, progress: progress)
     reporter?.cancel()
     clearProgressLine()
@@ -51,13 +51,16 @@ func runScanCommand(_ arguments: Arguments, progress: ScanProgress) async throws
         }
     case .clean:
         let (report, systemItems) = await collectCleanup(result, arguments: arguments)
-        let targets = arguments.runtimes.isEmpty
+        let targets = arguments.runtimes.isEmpty && arguments.devices.isEmpty
             ? selectCandidates(report.candidates, arguments: arguments).map {
                 DeletionTarget(candidate: $0, moveToTrash: arguments.trash)
             } + selectSystemItems(systemItems, arguments: arguments).compactMap(DeletionTarget.init(systemItem:))
-            // --runtime을 주면 그 런타임만 고른다. 다른 후보가 함께 지워지지 않게 하기 위해서다.
+            // --runtime, --device를 주면 그 런타임·시뮬레이터만 고른다. 다른 후보가 함께 지워지지 않게 하기 위해서다.
             : systemItems
-                .filter { $0.ruleID == "simulator.runtime" && arguments.runtimes.contains($0.selector) }
+                .filter { item in
+                    (item.ruleID == "simulator.runtime" && arguments.runtimes.contains(item.selector))
+                        || (item.ruleID == "simulator.device" && arguments.devices.contains(item.selector))
+                }
                 .compactMap(DeletionTarget.init(systemItem:))
         let plan = DeletionPlanner().plan(targets)
         printPlan(plan, top: top)
@@ -78,8 +81,16 @@ func collectCleanup(_ result: ScanResult, arguments: Arguments) async -> (Cleanu
     let engine = CleanupRuleEngine()
     let projectRoots = arguments.projects.isEmpty ? [result.root.name] : arguments.projects
     let inTree = await GitTrackedFilter().apply(to: engine.evaluate(result, projectRoots: projectRoots))
-    let scanner = DiskScanner(options: ScanOptions(threadCount: arguments.threads))
+    let scanner = DiskScanner(options: scanOptions(arguments))
     let outsideTree = await engine.evaluateLocations(outside: result.root.name, scanner: scanner)
-    let systemItems = await SimulatorItems.find()
+    let systemItems = await SystemItems.find()
     return (CleanupReport(merging: [inTree, outsideTree]), systemItems)
+}
+
+/// 전체 디스크 접근 권한이 없으면 보호 폴더를 건너뛴다. 읽으려 하면 macOS가 권한 창을 띄우고 답할 때까지 멈추기 때문이다.
+func scanOptions(_ arguments: Arguments) -> ScanOptions {
+    ScanOptions(
+        threadCount: arguments.threads,
+        excludedPaths: PrivacyProtection.hasFullDiskAccess ? [] : PrivacyProtection.protectedPaths()
+    )
 }
