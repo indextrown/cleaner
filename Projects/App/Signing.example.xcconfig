@@ -1,0 +1,4 @@
+// 이 파일을 Signing.xcconfig로 복사해 자기 인증서를 적습니다. Signing.xcconfig는 git에 올리지 않습니다.
+// 인증서 목록: security find-identity -v -p codesigning
+CLEANER_CODE_SIGN_IDENTITY = Apple Development: 이름 (인증서 ID)
+DEVELOPMENT_TEAM = 팀 ID

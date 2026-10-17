@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+
+# Tuist가 만드는 프로젝트와 빌드 결과
+*.xcodeproj/
+*.xcworkspace/
+Derived/
+DerivedData/
+Tuist/.cache/
+
+# 로컬 서명 설정
+Signing.xcconfig

@@ -1,0 +1,6 @@
+// 저장소 기본값. 로컬 서명 파일(Signing.xcconfig)이 있으면 그 값을 선택적으로 덮어씁니다.
+// 기본값은 ad-hoc 서명이라, 다시 빌드할 때마다 macOS가 권한(전체 디스크 접근 등)을 새로 묻습니다.
+CLEANER_CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Signing.xcconfig"
