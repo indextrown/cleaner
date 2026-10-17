@@ -150,3 +150,7 @@ swift test
 ## Full Disk Access
 
 `~/.Trash`, `~/Library/Messages`, 다른 앱의 컨테이너 일부는 Full Disk Access가 없으면 읽을 수 없다. 읽지 못한 경로는 스캔 결과의 `issues`에 남는다. 권한은 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에서 직접 부여한다.
+
+## 라이선스
+
+[MIT](LICENSE)
