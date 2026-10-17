@@ -7,6 +7,11 @@ enum Format {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
+    /// 메모리는 활동 모니터처럼 1024 단위로 센다(48 GB 램이 51.54 GB로 보이지 않게).
+    static func memory(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .memory)
+    }
+
     /// 지우면 확실히 비워지는 크기(공유 제외)와 최대 크기(할당)를 "1.41 GB ~ 192.62 GB"처럼 보여 준다.
     /// 둘이 거의 같으면(90% 이상) 하나만 보여 준다.
     static func byteRange(minimum: Int64, maximum: Int64) -> String {

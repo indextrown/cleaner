@@ -2,7 +2,7 @@
 
 맥 저장공간 청소 도구다. 빌드 산출물·캐시를 프로젝트 계층별로 찾아 지우고, 큰 폴더를 크기순으로 탐색한다.
 
-현재는 CleanerCore, CLI(스캔, 정리 후보, 삭제, 시스템 항목, 앱 목록·제거), SwiftUI 앱(정리, 시스템 데이터 분석, 큰 폴더 탐색, 앱 목록·제거)까지 구현되어 있다. CLI의 `clean`과 `uninstall`은 `--yes`를 주지 않으면 미리보기만 한다.
+현재는 CleanerCore, CLI(스캔, 정리 후보, 삭제, 시스템 항목, 앱 목록·제거), SwiftUI 앱(정리, 시스템 데이터 분석, 실행 중인 개발 도구 끄기, 큰 폴더 탐색, 앱 목록·제거)까지 구현되어 있다. CLI의 `clean`과 `uninstall`은 `--yes`를 주지 않으면 미리보기만 한다.
 
 ## 구성
 
@@ -33,9 +33,15 @@ open build/Cleaner.app
   - **남은 런타임 에셋**: 등록이 풀렸는데 `/System/Library/AssetsV2`에 남은 런타임 에셋을 따로 보여 준다. SIP로 보호되어 앱에서는 지우지 못한다.
   - **권한**: 전체 디스크 접근 권한이 없으면 보호 폴더 안에 있는 프로젝트 폴더는 건너뛰고 화면에 알린다.
 - **시스템 데이터**: 설정 앱의 "시스템 데이터"가 무엇으로 이루어졌는지 데이터 볼륨 전체를 읽어 칸으로 나눠 보여 준다(30초쯤). 시뮬레이터 런타임, 샌드박스 앱 데이터, 앱 지원 파일, Xcode·시뮬레이터 기기, 홈의 숨김 폴더, Homebrew, 스왑·임시 파일, 파일로 보이지 않는 공간(볼륨 사용량 − 읽은 파일 합계) 등이다. 칸마다 정리 가능 / 앱 데이터 / 개발 도구 / macOS 관리 / 읽을 수 없음을 붙이고, 정리 탭이 찾은 후보 중 그 칸에 드는 양을 함께 보여 준다. 설정 앱이 어떤 폴더를 시스템 데이터로 치는지는 공개되어 있지 않아 대략적인 분류다.
+- **실행 중**: 켜 둔 채 메모리를 쓰는 것을 묶어서 보여 주고 끈다. 5초마다 새로 읽는다.
+  - **시뮬레이터·에뮬레이터**: 켜진 iOS 시뮬레이터(`xcrun simctl shutdown`)와 Android 에뮬레이터(정상 종료 신호).
+  - **개발 도구 백그라운드**: Gradle·Kotlin 데몬, SourceKit, Xcode 빌드 서비스, Watchman, adb 서버, Docker 컨테이너(`docker stop`).
+  - **포트를 연 개발 서버**: 포트를 열고 기다리는 node·python·ruby·java 등과 홈 폴더 안에서 빌드한 실행 파일. 프로젝트 폴더와 포트를 함께 보여 준다.
+  - **앱**: 도우미 프로세스와 앱이 띄운 자식 프로세스까지 합친 메모리. 일반 종료(저장할지 앱이 물어봄)를 요청한다.
+  - 메모리는 활동 모니터의 "메모리"(phys_footprint)와 같은 기준이다. 맨 위에 메모리 압박 정도와 스왑 크기를 보여 준다. 정상 종료를 요청하고 6초 안에 꺼지지 않으면 "강제 종료" 버튼이 나타난다. 내 사용자의 프로세스만 다루고, launchd와 이 앱 자신에는 신호를 보내지 않는다.
 - **큰 폴더 탐색**: 홈, 디스크 전체(데이터 볼륨), 고른 폴더를 스캔해 크기순 표로 보여 준다. 폴더를 더블클릭하면 들어가고, 고른 항목은 휴지통으로 옮긴다(홈과 시뮬레이터 폴더 아래만, 홈의 주요 폴더 자체는 막음). 위쪽에는 디스크 사용량, 이 볼륨과 macOS·Preboot·Recovery·VM 볼륨의 크기, 스캔한 크기를 함께 보여 준다.
 - **앱**: 열 머리를 눌러 크기, 최소 크기, 추가된 날짜, 마지막 사용일, 이름으로 오름차순·내림차순 정렬한다. 고른 앱은 남은 데이터를 확인한 뒤 휴지통으로 옮긴다. root 소유 앱(App Store 앱 등)은 Finder를 거쳐 옮기므로 Finder가 관리자 암호를 묻는다.
-- **확인용 실행 인자**: `-section cleanup|systemData|explorer|applications`, `-systemData YES`(시스템 데이터 분석을 바로 시작), `-cleanup YES`(정리 후보를 바로 찾음), `-projectRoots '("~/Projects")'`(프로젝트 폴더 지정), `-cleanupReport <파일>`(정리 후보 요약 JSON), `-cleanupSection cache`(처음 볼 등급), `-expandAll YES`(모든 묶음 펼침), `-scan ~/Projects`(또는 `data`), `-scanReport <파일>`(스캔 요약 JSON), `-snapshot <파일>`(창을 PNG로 저장, 가려진 창은 하얗게 나올 수 있어 `screencapture -l <창 번호>`가 더 확실함), `-uninstallPreview <앱 이름>`(제거 창만 연다).
+- **확인용 실행 인자**: `-section cleanup|systemData|running|explorer|applications`, `-systemData YES`(시스템 데이터 분석을 바로 시작), `-cleanup YES`(정리 후보를 바로 찾음), `-projectRoots '("~/Projects")'`(프로젝트 폴더 지정), `-cleanupReport <파일>`(정리 후보 요약 JSON), `-cleanupSection cache`(처음 볼 등급), `-expandAll YES`(모든 묶음 펼침), `-scan ~/Projects`(또는 `data`), `-scanReport <파일>`(스캔 요약 JSON), `-snapshot <파일>`(창을 PNG로 저장, 가려진 창은 하얗게 나올 수 있어 `screencapture -l <창 번호>`가 더 확실함), `-uninstallPreview <앱 이름>`(제거 창만 연다).
 
 ## 실행
 

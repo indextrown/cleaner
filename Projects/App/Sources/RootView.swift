@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarItem: String, CaseIterable, Identifiable {
     case cleanup
     case systemData
+    case running
     case explorer
     case applications
 
@@ -12,6 +13,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         switch self {
         case .cleanup: "정리"
         case .systemData: "시스템 데이터"
+        case .running: "실행 중"
         case .explorer: "큰 폴더 탐색"
         case .applications: "앱"
         }
@@ -21,6 +23,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         switch self {
         case .cleanup: "sparkles"
         case .systemData: "chart.pie"
+        case .running: "cpu"
         case .explorer: "externaldrive"
         case .applications: "square.grid.2x2"
         }
@@ -31,6 +34,7 @@ struct RootView: View {
     @State private var selection: SidebarItem? = .cleanup
     @State private var cleanup = CleanupModel()
     @State private var systemData = SystemDataModel()
+    @State private var running = RunningModel()
     @State private var explorer = ExplorerModel()
     @State private var applications = ApplicationsModel()
 
@@ -47,6 +51,8 @@ struct RootView: View {
                 CleanupView(model: cleanup)
             case .systemData:
                 SystemDataView(model: systemData, cleanup: cleanup) { selection = .cleanup }
+            case .running:
+                RunningView(model: running)
             case .explorer:
                 ExplorerView(model: explorer)
             case .applications:

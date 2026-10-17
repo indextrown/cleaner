@@ -121,7 +121,7 @@ public enum SimulatorItems {
     }
 
     /// `com.apple.CoreSimulator.SimRuntime.iOS-26-0` → `iOS 26.0`
-    private static func runtimeName(_ runtimeIdentifier: String) -> String {
+    static func runtimeName(_ runtimeIdentifier: String) -> String {
         let parts = (runtimeIdentifier.split(separator: ".").last ?? "").split(separator: "-")
         let platform = platformName(runtimeIdentifier)
         return parts.count > 1 ? "\(platform) \(parts.dropFirst().joined(separator: "."))" : platform
